@@ -14,10 +14,11 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
     """ManipSpace environment.
 
     This is the base class for all OGBench manipulation task. It contains a UR5e robot arm with a Robotiq 2F-85 gripper.
-    The default control mode is relative end-effector control. The 5-D action space corresponds to the following:
-    - 3-D relative end-effector position (x, y, z).
-    - 1-D relative end-effector yaw.
-    - 1-D relative gripper opening.
+    By default the action controls the end-effector *relative* pose but ``action_type="absolute"`` can be specified to
+    use absolute end-effector targets instead. The 5-D action space corresponds to the following:
+    - 3-D end-effector position (relative delta or absolute coordinates).
+    - 1-D end-effector yaw (relative or absolute).
+    - 1-D gripper opening (relative or absolute).
     """
 
     def __init__(
@@ -31,6 +32,7 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
         pixel_transparent_arm=True,
         reward_task_id=None,
         use_oracle_rep=False,
+        action_type='relative',
         **kwargs,
     ):
         """Initialize the ManipSpace environment.
@@ -46,9 +48,12 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
             visualize_info: Whether to visualize the task information (e.g., success status).
             pixel_transparent_arm: Whether to make the arm transparent in pixel-based observations.
             reward_task_id: Task ID for single-task RL. If this is not None, the environment operates in a single-task
-            mode with the specified task ID. The task ID must be either a valid task ID or 0, where 0 means using the
-            default task.
+                mode with the specified task ID. The task ID must be either a valid task ID or 0, where 0 means using the
+                default task.
             use_oracle_rep: Whether to use oracle goal representations.
+            action_type: Either ``"relative"`` (default) or ``"absolute"``. In ``"relative"`` mode the action controls the
+                relative change of the end-effector pose. In ``"absolute"`` mode the action directly specifies the target
+                pose in workspace coordinates.
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
@@ -94,8 +99,10 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
         self._pixel_transparent_arm = pixel_transparent_arm
         self._reward_task_id = reward_task_id
         self._use_oracle_rep = use_oracle_rep
+        self._action_type = action_type
 
         assert ob_type in ['states', 'pixels']
+        assert self._action_type in ['relative', 'absolute']
 
         # Initialize inverse kinematics controller.
         ik_mjcf = mjcf.from_path((self._desc_dir / 'universal_robots_ur5e' / 'ur5e.xml'), escape_separators=True)
@@ -105,10 +112,14 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
 
         self._ik = controllers.DiffIKController(model=ik_model, sites=['attachment_site'])
 
-        # Define action space.
-        action_range = np.array([0.05, 0.05, 0.05, 0.3, 1.0])
-        self.action_low = -action_range
-        self.action_high = action_range
+        # Define action space depending on the action type.
+        if self._action_type == 'relative':
+            action_range = np.array([0.05, 0.05, 0.05, 0.3, 1.0])
+            self.action_low = -action_range
+            self.action_high = action_range
+        else:
+            self.action_low = np.concatenate([self._workspace_bounds[0], [-np.pi, 0.0]])
+            self.action_high = np.concatenate([self._workspace_bounds[1], [np.pi, 1.0]])
 
         if self._mode == 'task':
             # Set task goals.
@@ -336,19 +347,25 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
         action = self.unnormalize_action(action)
         a_pos, a_ori, a_gripper = action[:3], action[3], action[4]
 
-        # Compute target effector pose based on the relative action.
-        effector_pos = self._data.site_xpos[self._pinch_site_id].copy()
-        effector_yaw = lie.SO3.from_matrix(
-            self._data.site_xmat[self._pinch_site_id].copy().reshape(3, 3)
-        ).compute_yaw_radians()
-        gripper_opening = np.array(np.clip([self._data.qpos[self._gripper_opening_joint_id] / 0.8], 0, 1))
-        target_effector_translation = effector_pos + a_pos
-        target_effector_orientation = (
-            lie.SO3.from_z_radians(a_ori)
-            @ lie.SO3.from_z_radians(effector_yaw)
-            @ self._effector_down_rotation.inverse()
-        )
-        target_gripper_opening = gripper_opening + a_gripper
+        if self._action_type == 'relative':
+            # Compute target effector pose based on the relative action.
+            effector_pos = self._data.site_xpos[self._pinch_site_id].copy()
+            effector_yaw = lie.SO3.from_matrix(
+                self._data.site_xmat[self._pinch_site_id].copy().reshape(3, 3)
+            ).compute_yaw_radians()
+            gripper_opening = np.array(np.clip([self._data.qpos[self._gripper_opening_joint_id] / 0.8], 0, 1))
+            target_effector_translation = effector_pos + a_pos
+            target_effector_orientation = (
+                lie.SO3.from_z_radians(a_ori)
+                @ lie.SO3.from_z_radians(effector_yaw)
+                @ self._effector_down_rotation.inverse()
+            )
+            target_gripper_opening = gripper_opening + a_gripper
+        else:
+            # Absolute target pose.
+            target_effector_translation = a_pos
+            target_effector_orientation = lie.SO3.from_z_radians(a_ori) @ self._effector_down_rotation
+            target_gripper_opening = a_gripper
 
         # Make sure the target pose respects the action limits.
         np.clip(

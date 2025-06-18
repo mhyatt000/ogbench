@@ -74,6 +74,8 @@ go to [this section](#usage-for-standard-non-goal-conditioned-offline-rl).
 
 After installing OGBench, you can create an environment and datasets using `ogbench.make_env_and_datasets`.
 The environment follows the [Gymnasium](https://gymnasium.farama.org/) interface.
+Manipulation environments control the end-effector pose **relatively** by default.
+Pass `action_type="absolute"` to `ogbench.make_env_and_datasets` to use absolute actions instead.
 The datasets will be automatically downloaded during the first run.
 
 Here is an example of how to use OGBench for offline goal-conditioned RL:
