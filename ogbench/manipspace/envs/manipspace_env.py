@@ -118,7 +118,7 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
             self.action_low = -action_range
             self.action_high = action_range
         else:
-            self.action_low = np.concatenate([self._workspace_bounds[0], [-np.pi, 0.0]])
+            self.action_low = np.concatenate([self._workspace_bounds[0], [-np.pi, -1.0]])
             self.action_high = np.concatenate([self._workspace_bounds[1], [np.pi, 1.0]])
 
         if self._mode == 'task':
@@ -344,10 +344,9 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
         pass
 
     def set_control(self, action):
-        action = self.unnormalize_action(action)
-        a_pos, a_ori, a_gripper = action[:3], action[3], action[4]
-
         if self._action_type == 'relative':
+            action = self.unnormalize_action(action)
+            a_pos, a_ori, a_gripper = action[:3], action[3], action[4]
             # Compute target effector pose based on the relative action.
             effector_pos = self._data.site_xpos[self._pinch_site_id].copy()
             effector_yaw = lie.SO3.from_matrix(
@@ -362,6 +361,7 @@ class ManipSpaceEnv(CustomMuJoCoEnv):
             )
             target_gripper_opening = gripper_opening + a_gripper
         else:
+            a_pos, a_ori, a_gripper = action[:3], action[3], action[4]
             # Absolute target pose.
             target_effector_translation = a_pos
             target_effector_orientation = lie.SO3.from_z_radians(a_ori) @ self._effector_down_rotation

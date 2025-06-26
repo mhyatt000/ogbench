@@ -1,12 +1,15 @@
 import numpy as np
 
 from ogbench.manipspace.oracles.markov.markov_oracle import MarkovOracle
+from ogbench.manipspace import lie
 
 
 class CubeMarkovOracle(MarkovOracle):
-    def __init__(self, max_step=200, *args, **kwargs):
+    def __init__(self, max_step=200, action_type='relative', *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._max_step = max_step
+        assert action_type in ['relative', 'absolute']
+        self._action_type = action_type
 
     def reset(self, ob, info):
         self._done = False
@@ -18,7 +21,7 @@ class CubeMarkovOracle(MarkovOracle):
     def select_action(self, ob, info):
         effector_pos = info['proprio/effector_pos']
         effector_yaw = info['proprio/effector_yaw'][0]
-        gripper_opening = info['proprio/gripper_opening']
+        gripper_opening = info['proprio/gripper_opening']  # noqa
 
         target_block = info['privileged/target_block']
         block_pos = info[f'privileged/block_{target_block}_pos']
@@ -118,4 +121,38 @@ class CubeMarkovOracle(MarkovOracle):
         if self._step == self._max_step:
             self._done = True
 
-        return action
+        return action if self._action_type == 'relative' else self.rel2abs(action)
+
+    def rel2abs(self, action):
+        action_range = np.array([0.05, 0.05, 0.05, 0.3, 1.0])
+        action_low = -action_range
+        action_high = action_range
+
+        def unnormalize_action(action):
+            """Unnormalize the action to the range [action_low, action_high]."""
+            return 0.5 * (action + 1) * (action_high - action_low) + action_low
+
+        env = self._env.unwrapped
+        action = unnormalize_action(action)
+        a_pos, a_ori, a_gripper = action[:3], action[3], action[4]
+
+        # Compute target effector pose based on the relative action.
+        effector_pos = env._data.site_xpos[env._pinch_site_id].copy()
+        effector_yaw = lie.SO3.from_matrix(
+            env._data.site_xmat[env._pinch_site_id].copy().reshape(3, 3)
+        ).compute_yaw_radians()
+        gripper_opening = np.array(np.clip([env._data.qpos[env._gripper_opening_joint_id] / 0.8], 0, 1))
+        target_effector_translation = effector_pos + a_pos
+        target_effector_orientation = (  # noqa
+            lie.SO3.from_z_radians(a_ori) @ lie.SO3.from_z_radians(effector_yaw) @ env._effector_down_rotation.inverse()
+        )
+        target_gripper_opening = gripper_opening + a_gripper
+
+        act = np.concatenate(
+            [
+                target_effector_translation,
+                np.array([effector_yaw + a_ori]),
+                target_gripper_opening,
+            ]
+        )
+        return act
