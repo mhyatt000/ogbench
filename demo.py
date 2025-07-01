@@ -36,6 +36,7 @@ def safe_render(env):
         # print(spec(im))
         cv2.imshow('obs', cv2.cvtColor(im, cv2.COLOR_RGB2BGR))
         if cv2.waitKey(1000 // 20) == ord('q'):
+            # if cv2.waitKey(1) == ord('q'):
             return True
     return False
 
@@ -162,7 +163,8 @@ def main(cfg: Config):
                     # Add Gaussian noise to the action.
                     action = action + np.random.normal(0, [xi, xi, xi, xi * 3, xi * 10], action.shape)
 
-            action = np.clip(action, -1, 1)
+            # action = np.clip(action, -1, 1)
+            # pprint(np.array(action).round(2))
             next_ob, reward, terminated, truncated, info = env.step(action)
             # terminated = env.unwrapped._success
             done = terminated or truncated
