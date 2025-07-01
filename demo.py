@@ -44,7 +44,7 @@ def safe_render(env):
 def save_dataset(cfg, dataset, total_train_steps, total_steps):
     print('Total steps:', total_steps)
 
-    suffix = f'{cfg.env_name}-{cfg.dataset_type}.npz'
+    suffix = f'{cfg.env_name}-{cfg.dataset_type}-{cfg.seed}.npz'
     train_path = cfg.save_path / suffix
     val_path = cfg.save_path / suffix.replace('.npz', '-val.npz')
     Path(train_path).parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +77,7 @@ class Config:  # FLAGS
 
     dataset_type: str = 'play'
     save_path: str = Path.cwd()
+    seed: int = 0
     noise: float = 0.1
     noise_smoothing: float = 0.5
     min_norm: float = 0.4
@@ -163,7 +164,8 @@ def main(cfg: Config):
                     # Add Gaussian noise to the action.
                     action = action + np.random.normal(0, [xi, xi, xi, xi * 3, xi * 10], action.shape)
 
-            # action = np.clip(action, -1, 1)
+            if cfg.action_type == 'relative':
+                action = np.clip(action, -1, 1)
             # pprint(np.array(action).round(2))
             next_ob, reward, terminated, truncated, info = env.step(action)
             # terminated = env.unwrapped._success
